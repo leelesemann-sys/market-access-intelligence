@@ -1,11 +1,12 @@
 python-dotenv
 sqlalchemy
-pyodbc
+pymssql
 pandas
 openpyxl
 requests
 lxml
 openai
 azure-search-documents
+azure-core
 streamlit
 plotly
