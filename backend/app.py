@@ -1,8 +1,16 @@
-"""HTA Intelligence — Streamlit Dashboard + RAG Chat.
+"""Market Access Intelligence — Streamlit Dashboard + RAG Chat.
 
 Usage:
-    streamlit run app.py
+    streamlit run backend/app.py
 """
+import sys
+from pathlib import Path
+
+# Ensure backend/ is on the import path (needed for Streamlit Cloud)
+_backend_dir = str(Path(__file__).resolve().parent)
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -11,12 +19,12 @@ import plotly.graph_objects as go
 import db
 
 st.set_page_config(
-    page_title="HTA Intelligence",
+    page_title="Market Access Intelligence",
     page_icon="🔬",
     layout="wide",
 )
 
-st.title("HTA Intelligence")
+st.title("Market Access Intelligence")
 st.caption("Cross-Country Health Technology Assessment Analysis — G-BA (DE) & NICE (UK)")
 
 tab_dashboard, tab_compare, tab_chat = st.tabs(["Dashboard", "Drug Comparison", "RAG Chat"])
