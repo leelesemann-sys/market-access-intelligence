@@ -51,7 +51,7 @@ CREATE TABLE assessments (
     therapeutic_area    VARCHAR(100),
     indication          NVARCHAR(MAX),
     indication_short    NVARCHAR(255),
-    indication_icd10    VARCHAR(500),           -- comma-separated ICD-10 codes
+    indication_icd10    NVARCHAR(MAX),          -- comma-separated ICD-10 codes
 
     -- Dates
     decision_date       DATE,
