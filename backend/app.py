@@ -245,8 +245,11 @@ with tab_chat:
                     from chat.responder import respond
                     import config
 
-                    context = retrieve(prompt, top_k=8)
+                    context = retrieve(prompt, top_k=15)
+                    is_sql = any(doc.get("_source") == "sql" for doc in context)
                     answer = respond(prompt, context, model=config.OPENAI_CHAT_DEPLOYMENT)
+                    if is_sql:
+                        answer += f"\n\n---\n*Query mode: Database (SQL) — {len(context)} records retrieved*"
                 except Exception as e:
                     answer = f"Error: {e}"
 

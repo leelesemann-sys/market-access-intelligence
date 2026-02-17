@@ -5,6 +5,9 @@ assessment documents as context for the LLM.
 
 For comparison queries, runs separate searches per agency
 to ensure balanced results from both G-BA and NICE.
+
+For aggregate/listing queries ("all orphan drugs", "how many"),
+routes to direct SQL queries via sql_retriever.
 """
 import logging
 import re
@@ -91,6 +94,31 @@ def _is_comparison_query(query: str) -> bool:
     return any(re.search(p, q) for p in comparison_patterns)
 
 
+def _is_aggregate_query(query: str) -> bool:
+    """Detect if the user is asking for a complete listing or count.
+
+    These queries need direct SQL access, not top-k vector search,
+    because they expect ALL matching results.
+    """
+    q = query.lower()
+    aggregate_patterns = [
+        # "all" / "alle" / "sämtliche" requests
+        r"\balle\b", r"\ball\b", r"\bsämtliche\b", r"\bjede[rsnm]?\b",
+        # Listing: "list", "welche", "zeig(e) mir", "nenne", "auflistung"
+        r"\blist(e|en)?\b", r"\bwelche\b", r"\bzeig", r"\bnenne\b",
+        r"\bauflist", r"\bübersicht\b",
+        # Counting: "wie viele", "how many", "anzahl", "count"
+        r"\bwie\s+viele\b", r"\bhow\s+many\b", r"\banzahl\b", r"\bcount\b",
+        # Categorical queries that imply completeness
+        r"\borphan.{0,10}(drug|medikament|arzneimittel)", r"\b(drug|medikament)s?.{0,10}orphan",
+        # "since/seit" with year (implies listing over time range)
+        r"\bseit\s+\d{4}\b", r"\bsince\s+\d{4}\b",
+        # "in the last X years" / "in den letzten X Jahren"
+        r"\bletzten?\s+\d+\s+(jahr|year)", r"\blast\s+\d+\s+year",
+    ]
+    return any(re.search(p, q) for p in aggregate_patterns)
+
+
 def _search(query: str, query_vector: list[float],
             odata_filter: str | None, top_k: int) -> list[dict]:
     """Run a single hybrid search."""
@@ -116,18 +144,41 @@ def _search(query: str, query_vector: list[float],
 def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[dict]:
     """Hybrid search: vector + keyword + semantic reranking.
 
-    For comparison queries, runs two searches (one per agency)
-    to ensure balanced context from both G-BA and NICE.
+    Routes to different strategies based on query type:
+    - Aggregate/listing queries → direct SQL (complete results)
+    - Comparison queries → split search (balanced G-BA + NICE)
+    - Specific queries → normal hybrid search (top-k)
+
+    Returns:
+        List of context dicts. For SQL queries, includes a '_source' key
+        set to 'sql' and '_sql_description' with the query explanation.
     """
+    # 1. Aggregate/listing queries → SQL for complete results
+    if _is_aggregate_query(query):
+        from chat.sql_retriever import sql_retrieve
+        results, description = sql_retrieve(query)
+        if results:
+            # Tag results as SQL-sourced
+            for r in results:
+                r["_source"] = "sql"
+            if results and not results[0].get("total_count"):
+                results[0]["_sql_description"] = description
+                results[0]["_sql_total"] = len(results)
+            log.info("Aggregate query routed to SQL: %d results for: %s",
+                     len(results), query[:80])
+            return results
+
+        # SQL failed or returned nothing — fall through to vector search
+        log.info("SQL retrieval returned nothing, falling back to vector search")
+
+    # 2. Comparison queries → split search
     query_vector = get_embedding(query)
 
     if _is_comparison_query(query) and not (filters and filters.get("agency_id")):
-        # Split search: half G-BA, half NICE
         per_agency = max(top_k // 2, 4)
         gba_filter = "agency_id eq 'gba'"
         nice_filter = "agency_id eq 'nice'"
 
-        # Add any extra filters
         if filters:
             extra = _build_filter({k: v for k, v in filters.items() if k != "agency_id"})
             if extra:
@@ -141,7 +192,6 @@ def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[di
         context = []
         for pair in zip(gba_results, nice_results):
             context.extend(pair)
-        # Append remaining if one has more
         context.extend(gba_results[len(nice_results):])
         context.extend(nice_results[len(gba_results):])
 
@@ -149,7 +199,7 @@ def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[di
                  len(gba_results), len(nice_results), query[:80])
         return context[:top_k]
 
-    # Normal single search
+    # 3. Normal single search
     odata_filter = _build_filter(filters) if filters else None
     context = _search(query, query_vector, odata_filter, top_k)
     log.info("Retrieved %d results for: %s", len(context), query[:80])

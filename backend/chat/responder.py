@@ -2,6 +2,10 @@
 
 Takes retrieved context documents and generates an answer
 using GPT-4o, always citing sources.
+
+Handles two types of context:
+1. Vector search results (small set, rich detail)
+2. SQL query results (complete listings, tabular)
 """
 import logging
 
@@ -15,6 +19,8 @@ _client = None
 
 SYSTEM_PROMPT = """You are an HTA (Health Technology Assessment) expert assistant.
 You answer questions based on the provided assessment documents from G-BA (Germany) and NICE (UK).
+
+The database contains ~998 G-BA assessments (since 2011) and ~1312 NICE technology appraisals.
 
 Rules:
 - Answer in the same language as the user's question (German or English)
@@ -30,6 +36,25 @@ Source format for citations:
 - NICE: [NICE {source_id}] with link
 """
 
+SYSTEM_PROMPT_SQL = """You are an HTA (Health Technology Assessment) expert assistant.
+You answer questions based on COMPLETE database query results from the HTA Knowledge Base (G-BA Germany + NICE UK).
+
+The results below are COMPLETE — they contain ALL matching records from the database.
+The database contains ~998 G-BA assessments (since 2011) and ~1312 NICE technology appraisals.
+
+Rules:
+- Answer in the same language as the user's question (German or English)
+- Present ALL results from the data — do not skip or omit any
+- For listings: use a clear, structured format (table or numbered list)
+- Group results logically (by outcome, by year, by therapeutic area, etc.)
+- Include a total count at the top (e.g. "Insgesamt X Treffer")
+- Cite source IDs where relevant: [G-BA {source_id}] or [NICE {source_id}]
+- When comparing agencies, explain that G-BA evaluates clinical added benefit (Zusatznutzen)
+  while NICE evaluates cost-effectiveness
+- Never make up data — only report what is in the results
+- If the user asks for "alle" (all), make sure EVERY result is shown
+"""
+
 
 def _get_client() -> AzureOpenAI:
     global _client
@@ -43,7 +68,7 @@ def _get_client() -> AzureOpenAI:
 
 
 def _format_context_for_llm(docs: list[dict]) -> str:
-    """Format retrieved documents as structured context for the LLM."""
+    """Format vector search results as structured context for the LLM."""
     parts = []
     for i, doc in enumerate(docs, 1):
         agency = doc.get("agency_id", "").upper()
@@ -79,8 +104,48 @@ def _format_context_for_llm(docs: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
+def _format_sql_context_for_llm(docs: list[dict]) -> str:
+    """Format SQL query results as compact tabular context for the LLM."""
+    if not docs:
+        return ""
+
+    # Handle count-only results
+    if docs[0].get("total_count") is not None:
+        return f"Total count: {docs[0]['total_count']}"
+
+    description = docs[0].get("_sql_description", "")
+    total = docs[0].get("_sql_total", len(docs))
+    header = f"Database query: {description}\nTotal results: {total}\n\n"
+
+    lines = []
+    for i, doc in enumerate(docs, 1):
+        agency = doc.get("agency_id", "").upper()
+        inn = doc.get("drug_inn", "?")
+        brand = doc.get("drug_brand", "")
+        rating = doc.get("source_rating", "")
+        outcome = doc.get("overall_outcome", "")
+        date = doc.get("decision_date", "")
+        src_id = doc.get("source_id", "")
+        indication = doc.get("indication_short", "")
+        orphan = " [ORPHAN]" if doc.get("orphan_drug") else ""
+        url = doc.get("source_url", "")
+
+        drug_str = f"{inn} ({brand})" if brand and brand != inn else inn
+        line = f"{i}. [{agency} {src_id}] {drug_str}{orphan} | {rating} | {outcome} | {date}"
+        if indication:
+            line += f" | {indication[:120]}"
+        if url:
+            line += f" | {url}"
+        lines.append(line)
+
+    return header + "\n".join(lines)
+
+
 def respond(query: str, context: list[dict], model: str = "gpt-4o") -> str:
     """Generate a response using GPT-4o with retrieved context.
+
+    Automatically detects whether context came from SQL (aggregate) or
+    vector search, and uses appropriate formatting and system prompt.
 
     Args:
         query: User's question
@@ -94,10 +159,21 @@ def respond(query: str, context: list[dict], model: str = "gpt-4o") -> str:
         return ("Ich konnte keine relevanten Bewertungen zu dieser Frage finden. "
                 "Bitte versuchen Sie eine andere Formulierung oder prüfen Sie die Filter.")
 
-    context_text = _format_context_for_llm(context)
+    # Detect SQL vs vector search results
+    is_sql = any(doc.get("_source") == "sql" for doc in context)
+
+    if is_sql:
+        context_text = _format_sql_context_for_llm(context)
+        system_prompt = SYSTEM_PROMPT_SQL
+        # More tokens for large listings
+        max_tokens = min(4000, 500 + len(context) * 40)
+    else:
+        context_text = _format_context_for_llm(context)
+        system_prompt = SYSTEM_PROMPT
+        max_tokens = 2000
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {query}"},
     ]
 
@@ -106,10 +182,10 @@ def respond(query: str, context: list[dict], model: str = "gpt-4o") -> str:
         model=model,
         messages=messages,
         temperature=0.3,
-        max_tokens=2000,
+        max_tokens=max_tokens,
     )
 
     answer = response.choices[0].message.content
-    log.info("Generated response (%d tokens) for: %s",
-             response.usage.completion_tokens, query[:80])
+    log.info("Generated response (%d tokens, sql=%s) for: %s",
+             response.usage.completion_tokens, is_sql, query[:80])
     return answer
