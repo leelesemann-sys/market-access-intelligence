@@ -1,0 +1,11 @@
+python-dotenv
+sqlalchemy
+pyodbc
+pandas
+openpyxl
+requests
+lxml
+openai
+azure-search-documents
+streamlit
+plotly
