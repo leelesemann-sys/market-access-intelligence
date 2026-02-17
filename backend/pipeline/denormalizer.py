@@ -30,6 +30,9 @@ def _build_embedding_text(row: dict) -> str:
     if row.get("atc_code"):
         parts.append(f"ATC: {row['atc_code']}")
 
+    if row.get("orphan_drug"):
+        parts.append("Orphan drug: yes")
+
     parts.append(f"Agency: {agency_label}")
 
     if row.get("therapeutic_area"):
@@ -188,12 +191,16 @@ def refresh() -> int:
 def _update_embedding_texts():
     """Build embedding_text + embedding_hash for documents that need it."""
     rows = db.fetch_all("""
-        SELECT id, agency_id, drug_inn, drug_brand, atc_code,
-               therapeutic_area, indication, source_rating, overall_outcome,
-               comparator_names, benefit_extent, evidence_certainty,
-               endpoint_summary, nice_comment
-        FROM search_documents
-        WHERE embedding_text IS NULL
+        SELECT sd.id, sd.agency_id, sd.drug_inn, sd.drug_brand, sd.atc_code,
+               sd.therapeutic_area, sd.indication, sd.source_rating, sd.overall_outcome,
+               sd.comparator_names, sd.benefit_extent, sd.evidence_certainty,
+               sd.endpoint_summary, sd.nice_comment,
+               COALESCE(d.orphan_drug, 0) AS orphan_drug
+        FROM search_documents sd
+        LEFT JOIN assessments a ON a.agency_id = sd.agency_id
+            AND sd.id = CONCAT(sd.agency_id, '-', a.source_id)
+        LEFT JOIN drugs d ON a.drug_id = d.drug_id
+        WHERE sd.embedding_text IS NULL
     """)
 
     if not rows:
@@ -211,7 +218,7 @@ def _update_embedding_texts():
             "source_rating": row[7], "overall_outcome": row[8],
             "comparator_names": row[9], "benefit_extent": row[10],
             "evidence_certainty": row[11], "endpoint_summary": row[12],
-            "nice_comment": row[13],
+            "nice_comment": row[13], "orphan_drug": row[14],
         }
         emb_text = _build_embedding_text(data)
         emb_hash = hashlib.sha256(emb_text.encode("utf-8")).hexdigest()

@@ -73,6 +73,12 @@ def _upsert_drug(conn, record: AssessmentRecord, stats: dict) -> int:
     ).fetchone()
 
     if row:
+        # Update orphan_drug flag if it changed (e.g. fix from parser)
+        if record.orphan_drug:
+            conn.execute(
+                text("UPDATE drugs SET orphan_drug = 1 WHERE drug_id = :id AND orphan_drug = 0"),
+                {"id": row[0]},
+            )
         stats["drugs_existing"] += 1
         return row[0]
 

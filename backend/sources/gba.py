@@ -219,7 +219,8 @@ class GBASource(HTASource):
         zul = be.find("ZUL")
         brand_name = _attr(zul, "NAME_HN") if zul is not None else ""
         indication_full = _strip_html(_text(zul, "AWG")) if zul is not None else ""
-        orphan = _attr(zul, "SOND_ZUL_ORPHAN") == "true" if zul is not None else False
+        # SOND_ZUL_ORPHAN is a child element of ZUL with value="1" (not a ZUL attribute)
+        orphan = _attr(zul, "SOND_ZUL_ORPHAN") == "1" if zul is not None else False
 
         # Parse all patient groups
         subgroups = []
