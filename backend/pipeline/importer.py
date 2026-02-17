@@ -29,20 +29,26 @@ def import_records(records: list[AssessmentRecord]) -> dict:
     }
 
     engine = db.get_engine()
+    batch_size = 50
 
-    for record in records:
+    for i in range(0, len(records), batch_size):
+        batch = records[i:i + batch_size]
         with engine.begin() as conn:
-            # 1. Upsert drug
-            drug_id = _upsert_drug(conn, record, stats)
+            for record in batch:
+                # 1. Upsert drug
+                drug_id = _upsert_drug(conn, record, stats)
 
-            # 2. Upsert assessment
-            assessment_id = _upsert_assessment(conn, record, drug_id, stats)
+                # 2. Upsert assessment
+                assessment_id = _upsert_assessment(conn, record, drug_id, stats)
 
-            # 3. Insert subgroup outcomes (delete + re-insert)
-            _replace_outcomes(conn, assessment_id, record, stats)
+                # 3. Insert subgroup outcomes (delete + re-insert)
+                _replace_outcomes(conn, assessment_id, record, stats)
 
-            # 4. Insert comparators (delete + re-insert)
-            _replace_comparators(conn, assessment_id, record, stats)
+                # 4. Insert comparators (delete + re-insert)
+                _replace_comparators(conn, assessment_id, record, stats)
+
+        if (i + batch_size) % 200 == 0 or i + batch_size >= len(records):
+            log.info("  ... processed %d / %d records", min(i + batch_size, len(records)), len(records))
 
     log.info(
         "Import complete: %d drugs (new: %d), %d assessments (new: %d, updated: %d), "

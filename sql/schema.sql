@@ -214,16 +214,64 @@ GROUP BY a.agency_id, a.therapeutic_area, a.overall_outcome, a.source_rating, YE
 GO
 
 CREATE VIEW v_matched_drug_pairs AS
+WITH gba_latest AS (
+    SELECT
+        d.inn, d.atc_code, d.orphan_drug, d.brand_name,
+        a.source_id, a.source_rating, a.overall_outcome,
+        a.decision_date, a.therapeutic_area, a.indication_short,
+        ROW_NUMBER() OVER (PARTITION BY LOWER(d.inn) ORDER BY a.decision_date DESC) AS rn
+    FROM assessments a
+    JOIN drugs d ON a.drug_id = d.drug_id
+    WHERE a.agency_id = 'gba'
+),
+nice_latest AS (
+    SELECT
+        d.inn, d.brand_name,
+        a.source_id, a.source_rating, a.overall_outcome,
+        a.decision_date, a.indication_short, a.process_type,
+        ROW_NUMBER() OVER (PARTITION BY LOWER(d.inn) ORDER BY a.decision_date DESC) AS rn
+    FROM assessments a
+    JOIN drugs d ON a.drug_id = d.drug_id
+    WHERE a.agency_id = 'nice'
+)
 SELECT
-    d.inn,
-    d.atc_code,
-    d.orphan_drug,
+    g.inn, g.atc_code, g.orphan_drug,
+    g.brand_name        AS gba_brand,
+    g.source_id         AS gba_source_id,
+    g.source_rating     AS gba_rating,
+    g.overall_outcome   AS gba_outcome,
+    g.decision_date     AS gba_date,
+    g.therapeutic_area,
+    n.brand_name        AS nice_brand,
+    n.source_id         AS nice_source_id,
+    n.source_rating     AS nice_rating,
+    n.overall_outcome   AS nice_outcome,
+    n.decision_date     AS nice_date,
+    CASE
+        WHEN g.overall_outcome = n.overall_outcome THEN 'concordant'
+        ELSE 'discordant'
+    END AS concordance
+FROM gba_latest g
+JOIN nice_latest n ON LOWER(g.inn) = LOWER(n.inn) AND n.rn = 1
+WHERE g.rn = 1;
+GO
+
+-- All cross-country assessment pairs (every G-BA × every NICE for same INN)
+CREATE VIEW v_cross_country_all AS
+SELECT
+    gba_d.inn,
+    gba_d.atc_code,
+    gba_d.brand_name    AS gba_brand,
+    gba.assessment_id   AS gba_assessment_id,
     gba.source_id       AS gba_source_id,
+    gba.indication_short AS gba_indication,
     gba.source_rating   AS gba_rating,
     gba.overall_outcome AS gba_outcome,
     gba.decision_date   AS gba_date,
-    gba.therapeutic_area,
+    nice_d.brand_name   AS nice_brand,
+    nice.assessment_id  AS nice_assessment_id,
     nice.source_id      AS nice_source_id,
+    nice.indication_short AS nice_indication,
     nice.source_rating  AS nice_rating,
     nice.overall_outcome AS nice_outcome,
     nice.decision_date  AS nice_date,
@@ -231,7 +279,10 @@ SELECT
         WHEN gba.overall_outcome = nice.overall_outcome THEN 'concordant'
         ELSE 'discordant'
     END AS concordance
-FROM drugs d
-JOIN assessments gba  ON d.drug_id = gba.drug_id  AND gba.agency_id = 'gba'
-JOIN assessments nice ON d.drug_id = nice.drug_id  AND nice.agency_id = 'nice';
+FROM assessments gba
+JOIN drugs gba_d ON gba.drug_id = gba_d.drug_id
+JOIN assessments nice ON nice.agency_id = 'nice'
+JOIN drugs nice_d ON nice.drug_id = nice_d.drug_id
+    AND LOWER(gba_d.inn) = LOWER(nice_d.inn)
+WHERE gba.agency_id = 'gba';
 GO
