@@ -2,8 +2,12 @@
 
 Searches the Azure AI Search index and returns relevant
 assessment documents as context for the LLM.
+
+For comparison queries, runs separate searches per agency
+to ensure balanced results from both G-BA and NICE.
 """
 import logging
+import re
 
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
@@ -13,6 +17,13 @@ import config
 from pipeline.embedder import get_embedding
 
 log = logging.getLogger(__name__)
+
+_SELECT_FIELDS = [
+    "id", "agency_id", "drug_inn", "drug_brand",
+    "indication", "source_rating", "overall_outcome",
+    "comparator_names", "benefit_extent", "evidence_certainty",
+    "endpoint_summary", "nice_comment", "decision_date", "source_url",
+]
 
 
 def _get_search_client() -> SearchClient:
@@ -67,22 +78,23 @@ def _format_context(result) -> dict:
     }
 
 
-def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[dict]:
-    """Hybrid search: vector + keyword + semantic reranking.
+def _is_comparison_query(query: str) -> bool:
+    """Detect if the user is asking for a cross-country comparison."""
+    q = query.lower()
+    comparison_patterns = [
+        r"\bvergleich", r"\bcompare\b", r"\bcompar", r"\bvs\.?\b",
+        r"\bgegen\b", r"\bversus\b", r"\bboth\b", r"\bbeide\b",
+        r"\bg-ba.{0,10}nice\b", r"\bnice.{0,10}g-ba\b",
+        r"\bgermany.{0,10}uk\b", r"\buk.{0,10}germany\b",
+        r"\bdeutschland.{0,10}(uk|england)\b",
+    ]
+    return any(re.search(p, q) for p in comparison_patterns)
 
-    Args:
-        query: Natural language query (DE or EN)
-        filters: Optional dict with agency_id, overall_outcome, etc.
-        top_k: Number of results to return
 
-    Returns:
-        List of context dicts, sorted by relevance.
-    """
+def _search(query: str, query_vector: list[float],
+            odata_filter: str | None, top_k: int) -> list[dict]:
+    """Run a single hybrid search."""
     client = _get_search_client()
-    query_vector = get_embedding(query)
-
-    odata_filter = _build_filter(filters) if filters else None
-
     results = client.search(
         search_text=query,
         vector_queries=[
@@ -96,14 +108,49 @@ def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[di
         query_type="semantic",
         semantic_configuration_name=config.SEMANTIC_CONFIG,
         top=top_k,
-        select=[
-            "id", "agency_id", "drug_inn", "drug_brand",
-            "indication", "source_rating", "overall_outcome",
-            "comparator_names", "benefit_extent", "evidence_certainty",
-            "endpoint_summary", "nice_comment", "decision_date", "source_url",
-        ],
+        select=_SELECT_FIELDS,
     )
+    return [_format_context(r) for r in results]
 
-    context = [_format_context(r) for r in results]
-    log.info("Retrieved %d results for query: %s", len(context), query[:80])
+
+def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[dict]:
+    """Hybrid search: vector + keyword + semantic reranking.
+
+    For comparison queries, runs two searches (one per agency)
+    to ensure balanced context from both G-BA and NICE.
+    """
+    query_vector = get_embedding(query)
+
+    if _is_comparison_query(query) and not (filters and filters.get("agency_id")):
+        # Split search: half G-BA, half NICE
+        per_agency = max(top_k // 2, 4)
+        gba_filter = "agency_id eq 'gba'"
+        nice_filter = "agency_id eq 'nice'"
+
+        # Add any extra filters
+        if filters:
+            extra = _build_filter({k: v for k, v in filters.items() if k != "agency_id"})
+            if extra:
+                gba_filter = f"{gba_filter} and {extra}"
+                nice_filter = f"{nice_filter} and {extra}"
+
+        gba_results = _search(query, query_vector, gba_filter, per_agency)
+        nice_results = _search(query, query_vector, nice_filter, per_agency)
+
+        # Interleave: GBA, NICE, GBA, NICE...
+        context = []
+        for pair in zip(gba_results, nice_results):
+            context.extend(pair)
+        # Append remaining if one has more
+        context.extend(gba_results[len(nice_results):])
+        context.extend(nice_results[len(gba_results):])
+
+        log.info("Comparison search: %d G-BA + %d NICE for: %s",
+                 len(gba_results), len(nice_results), query[:80])
+        return context[:top_k]
+
+    # Normal single search
+    odata_filter = _build_filter(filters) if filters else None
+    context = _search(query, query_vector, odata_filter, top_k)
+    log.info("Retrieved %d results for: %s", len(context), query[:80])
     return context
