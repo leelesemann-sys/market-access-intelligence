@@ -5,6 +5,7 @@ pandas
 openpyxl
 requests
 lxml
+pdfplumber
 openai
 azure-search-documents
 azure-core

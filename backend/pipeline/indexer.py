@@ -59,6 +59,13 @@ def create_index():
         SimpleField(name="evidence_certainty", type=SearchFieldDataType.String, filterable=True, facetable=True),
         SimpleField(name="nice_process", type=SearchFieldDataType.String, filterable=True, facetable=True),
 
+        # PDF chunk fields
+        SimpleField(name="doc_type", type=SearchFieldDataType.String, filterable=True, facetable=True),
+        SimpleField(name="parent_id", type=SearchFieldDataType.String, filterable=True),
+        SimpleField(name="chunk_index", type=SearchFieldDataType.Int32, sortable=True),
+        SearchableField(name="section_title", type=SearchFieldDataType.String, analyzer_name="de.microsoft"),
+        SimpleField(name="document_url", type=SearchFieldDataType.String),
+
         # Non-searchable metadata
         SimpleField(name="decision_date", type=SearchFieldDataType.DateTimeOffset, filterable=True, sortable=True),
         SimpleField(name="source_url", type=SearchFieldDataType.String),
@@ -135,6 +142,12 @@ def _format_doc(doc: dict) -> dict:
         "nice_comment": doc.get("nice_comment"),
         "source_url": doc.get("source_url"),
         "content_vector": doc.get("content_vector"),
+        # PDF chunk fields
+        "doc_type": doc.get("doc_type"),
+        "parent_id": doc.get("parent_id"),
+        "chunk_index": doc.get("chunk_index"),
+        "section_title": doc.get("section_title"),
+        "document_url": doc.get("document_url"),
     }
 
     # Format decision_year

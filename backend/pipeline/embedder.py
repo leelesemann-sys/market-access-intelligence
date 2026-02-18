@@ -53,7 +53,8 @@ def embed_and_collect(batch_size: int = 100) -> list[dict]:
                therapeutic_area, indication, source_rating, overall_outcome,
                comparator_names, decision_date, decision_year,
                benefit_extent, evidence_certainty, endpoint_summary,
-               nice_process, nice_comment, source_url
+               nice_process, nice_comment, source_url,
+               doc_type, parent_id, chunk_index, section_title, document_url
         FROM search_documents
         WHERE embedding_text IS NOT NULL
           AND indexed_at IS NULL
@@ -99,6 +100,11 @@ def embed_and_collect(batch_size: int = 100) -> list[dict]:
                 "nice_process": row[17],
                 "nice_comment": row[18],
                 "source_url": row[19],
+                "doc_type": row[20],
+                "parent_id": row[21],
+                "chunk_index": row[22],
+                "section_title": row[23],
+                "document_url": row[24],
                 "content_vector": vector,
             })
 

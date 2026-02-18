@@ -26,6 +26,8 @@ _SELECT_FIELDS = [
     "indication", "source_rating", "overall_outcome",
     "comparator_names", "benefit_extent", "evidence_certainty",
     "endpoint_summary", "nice_comment", "decision_date", "source_url",
+    "doc_type", "parent_id", "section_title", "document_url",
+    "embedding_text",
 ]
 
 
@@ -61,7 +63,7 @@ def _build_filter(filters: dict) -> str | None:
 
 def _format_context(result) -> dict:
     """Format a search result into a context dict for the LLM."""
-    return {
+    ctx = {
         "id": result["id"],
         "agency_id": result.get("agency_id", ""),
         "drug_inn": result.get("drug_inn", ""),
@@ -78,7 +80,13 @@ def _format_context(result) -> dict:
         "source_url": result.get("source_url", ""),
         "score": result.get("@search.score", 0),
         "reranker_score": result.get("@search.reranker_score", 0),
+        "doc_type": result.get("doc_type", ""),
+        "parent_id": result.get("parent_id", ""),
+        "section_title": result.get("section_title", ""),
+        "document_url": result.get("document_url", ""),
+        "embedding_text": result.get("embedding_text", ""),
     }
+    return ctx
 
 
 def _is_comparison_query(query: str) -> bool:

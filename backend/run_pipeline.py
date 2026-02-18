@@ -7,6 +7,8 @@ Usage:
     python run_pipeline.py --source gba --skip-download  # Use cached XML
     python run_pipeline.py --index             # Denormalize + Embed + Index
     python run_pipeline.py --source all --index  # Full pipeline
+    python run_pipeline.py --pdfs              # PDF pipeline (Tragende Gründe)
+    python run_pipeline.py --pdfs --pdf-limit 10  # Test with 10 PDFs
 """
 
 import argparse
@@ -118,6 +120,22 @@ def main():
         action="store_true",
         help="Run denormalize → embed → index pipeline",
     )
+    parser.add_argument(
+        "--pdfs",
+        action="store_true",
+        help="Run PDF pipeline (scrape, download, parse, chunk, embed, index)",
+    )
+    parser.add_argument(
+        "--pdf-limit",
+        type=int,
+        default=None,
+        help="Max PDFs to process (for testing)",
+    )
+    parser.add_argument(
+        "--skip-scrape",
+        action="store_true",
+        help="Skip scraping PDF URLs (use existing documents table entries)",
+    )
     args = parser.parse_args()
 
     start = time.time()
@@ -127,6 +145,8 @@ def main():
         parts.append(f"source={args.source}")
     if args.index:
         parts.append("index")
+    if args.pdfs:
+        parts.append(f"pdfs" + (f" (limit={args.pdf_limit})" if args.pdf_limit else ""))
     log.info("HTA Intelligence Pipeline — %s", ", ".join(parts) or "no action")
     log.info("=" * 60)
 
@@ -140,11 +160,20 @@ def main():
         if stats:
             log.info("NICE stats: %s", stats)
 
-    if not args.source and not args.index:
-        parser.error("At least one of --source or --index is required")
+    if not args.source and not args.index and not args.pdfs:
+        parser.error("At least one of --source, --index, or --pdfs is required")
 
     if args.index:
         run_index()
+
+    if args.pdfs:
+        from pipeline.pdf_pipeline import run_pdf_pipeline
+        log.info("--- PDF Pipeline ---")
+        pdf_stats = run_pdf_pipeline(
+            limit=args.pdf_limit,
+            skip_scrape=args.skip_scrape,
+        )
+        log.info("PDF stats: %s", pdf_stats)
 
     elapsed = time.time() - start
     log.info("Pipeline finished in %.1f seconds", elapsed)

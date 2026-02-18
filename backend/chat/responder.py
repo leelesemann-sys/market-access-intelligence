@@ -36,8 +36,13 @@ For COMPARISON queries (drug X at G-BA vs NICE):
 - End with a brief 1-2 sentence comparison note (G-BA = clinical added benefit, NICE = cost-effectiveness)
 - Do NOT write long explanatory paragraphs — let the structured data speak
 
+Some context may come from PDF documents (G-BA "Tragende Gründe" — decision rationale documents).
+These are marked as [PDF Chunk] and contain detailed clinical reasoning, endpoint results, and benefit assessments.
+When citing PDF chunks, use: [G-BA {source_id} — Tragende Gründe, {section_title}] with the document URL.
+
 Source format for citations:
-- G-BA: [G-BA {source_id}] with link
+- G-BA assessment: [G-BA {source_id}] with link
+- G-BA PDF chunk: [G-BA {source_id} — Tragende Gründe, {section}] with document URL
 - NICE: [NICE {source_id}] with link
 """
 
@@ -77,34 +82,55 @@ def _format_context_for_llm(docs: list[dict]) -> str:
     parts = []
     for i, doc in enumerate(docs, 1):
         agency = doc.get("agency_id", "").upper()
-        lines = [f"--- Document {i} [{agency}] ---"]
-        lines.append(f"ID: {doc.get('id', '')}")
-        if doc.get("drug_inn"):
-            brand = doc.get("drug_brand", "")
-            if brand and brand != doc["drug_inn"]:
-                lines.append(f"Drug: {doc['drug_inn']} ({brand})")
-            else:
+        is_pdf = doc.get("doc_type") == "pdf_chunk"
+
+        if is_pdf:
+            # PDF chunk: show section content with metadata
+            lines = [f"--- PDF Chunk {i} [{agency}] ---"]
+            lines.append(f"ID: {doc.get('id', '')}")
+            if doc.get("drug_inn"):
                 lines.append(f"Drug: {doc['drug_inn']}")
-        if doc.get("indication"):
-            lines.append(f"Indication: {doc['indication'][:300]}")
-        if doc.get("source_rating"):
-            lines.append(f"Rating: {doc['source_rating']}")
-        if doc.get("overall_outcome"):
-            lines.append(f"Outcome: {doc['overall_outcome']}")
-        if doc.get("comparator_names"):
-            lines.append(f"Comparators: {doc['comparator_names'][:200]}")
-        if doc.get("benefit_extent"):
-            lines.append(f"Benefit extent: {doc['benefit_extent']}")
-        if doc.get("evidence_certainty"):
-            lines.append(f"Evidence: {doc['evidence_certainty']}")
-        if doc.get("endpoint_summary"):
-            lines.append(f"Endpoints: {doc['endpoint_summary']}")
-        if doc.get("nice_comment"):
-            lines.append(f"Comment: {doc['nice_comment'][:300]}")
-        if doc.get("decision_date"):
-            lines.append(f"Decision date: {doc['decision_date']}")
-        if doc.get("source_url"):
-            lines.append(f"Source: {doc['source_url']}")
+            if doc.get("section_title"):
+                lines.append(f"Section: {doc['section_title']}")
+            if doc.get("parent_id"):
+                lines.append(f"Parent assessment: {doc['parent_id']}")
+            if doc.get("embedding_text"):
+                # embedding_text has the prefix + full chunk text
+                lines.append(f"Content:\n{doc['embedding_text']}")
+            elif doc.get("indication"):
+                lines.append(f"Content: {doc['indication']}")
+            if doc.get("document_url"):
+                lines.append(f"PDF URL: {doc['document_url']}")
+        else:
+            # Assessment metadata document
+            lines = [f"--- Document {i} [{agency}] ---"]
+            lines.append(f"ID: {doc.get('id', '')}")
+            if doc.get("drug_inn"):
+                brand = doc.get("drug_brand", "")
+                if brand and brand != doc["drug_inn"]:
+                    lines.append(f"Drug: {doc['drug_inn']} ({brand})")
+                else:
+                    lines.append(f"Drug: {doc['drug_inn']}")
+            if doc.get("indication"):
+                lines.append(f"Indication: {doc['indication'][:300]}")
+            if doc.get("source_rating"):
+                lines.append(f"Rating: {doc['source_rating']}")
+            if doc.get("overall_outcome"):
+                lines.append(f"Outcome: {doc['overall_outcome']}")
+            if doc.get("comparator_names"):
+                lines.append(f"Comparators: {doc['comparator_names'][:200]}")
+            if doc.get("benefit_extent"):
+                lines.append(f"Benefit extent: {doc['benefit_extent']}")
+            if doc.get("evidence_certainty"):
+                lines.append(f"Evidence: {doc['evidence_certainty']}")
+            if doc.get("endpoint_summary"):
+                lines.append(f"Endpoints: {doc['endpoint_summary']}")
+            if doc.get("nice_comment"):
+                lines.append(f"Comment: {doc['nice_comment'][:300]}")
+            if doc.get("decision_date"):
+                lines.append(f"Decision date: {doc['decision_date']}")
+            if doc.get("source_url"):
+                lines.append(f"Source: {doc['source_url']}")
         parts.append("\n".join(lines))
     return "\n\n".join(parts)
 
