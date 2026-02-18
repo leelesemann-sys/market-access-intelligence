@@ -1,5 +1,7 @@
 # Market Access Intelligence
 
+> **Language:** English | [Deutsch](README.de.md)
+
 **Cross-country Health Technology Assessment (HTA) analysis powered by AI.**
 
 Compare drug approval decisions between G-BA (Germany) and NICE (UK) through interactive analytics, side-by-side drug comparisons, and an AI-powered knowledge base chat.
