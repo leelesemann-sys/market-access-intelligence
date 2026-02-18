@@ -44,10 +44,13 @@ Key domain knowledge:
 - "kein Zusatznutzen" (no added benefit) maps to overall_outcome = 'negative'
 - therapeutic_area values include: 'oncology', 'cardiology', 'neurology', 'immunology', etc.
 - Use LOWER() for case-insensitive string comparisons
+- For drug name searches: use LOWER(d.inn) LIKE '%drugname%' (partial match, case-insensitive)
 - For date filters: decision_date >= 'YYYY-MM-DD' format
 - "last 2 years" means decision_date >= '2024-01-01' (current year is 2026)
 - "last 3 years" means decision_date >= '2023-01-01'
 - "seit 2024" means decision_date >= '2024-01-01'
+- For comparison queries ("compare X at G-BA vs NICE"): filter by drug name only, do NOT filter by agency.
+  Return all assessments from both agencies so they can be compared side-by-side.
 
 Respond ONLY with a JSON object:
 {

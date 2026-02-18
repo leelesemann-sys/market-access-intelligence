@@ -141,12 +141,26 @@ def _search(query: str, query_vector: list[float],
     return [_format_context(r) for r in results]
 
 
+def _try_sql(query: str) -> list[dict] | None:
+    """Attempt SQL retrieval. Returns tagged results or None."""
+    from chat.sql_retriever import sql_retrieve
+    results, description = sql_retrieve(query)
+    if not results:
+        return None
+    for r in results:
+        r["_source"] = "sql"
+    if not results[0].get("total_count"):
+        results[0]["_sql_description"] = description
+        results[0]["_sql_total"] = len(results)
+    return results
+
+
 def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[dict]:
     """Hybrid search: vector + keyword + semantic reranking.
 
     Routes to different strategies based on query type:
     - Aggregate/listing queries → direct SQL (complete results)
-    - Comparison queries → split search (balanced G-BA + NICE)
+    - Comparison queries → SQL for complete drug comparison
     - Specific queries → normal hybrid search (top-k)
 
     Returns:
@@ -155,26 +169,23 @@ def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[di
     """
     # 1. Aggregate/listing queries → SQL for complete results
     if _is_aggregate_query(query):
-        from chat.sql_retriever import sql_retrieve
-        results, description = sql_retrieve(query)
+        results = _try_sql(query)
         if results:
-            # Tag results as SQL-sourced
-            for r in results:
-                r["_source"] = "sql"
-            if results and not results[0].get("total_count"):
-                results[0]["_sql_description"] = description
-                results[0]["_sql_total"] = len(results)
             log.info("Aggregate query routed to SQL: %d results for: %s",
                      len(results), query[:80])
             return results
-
-        # SQL failed or returned nothing — fall through to vector search
         log.info("SQL retrieval returned nothing, falling back to vector search")
 
-    # 2. Comparison queries → split search
-    query_vector = get_embedding(query)
-
+    # 2. Comparison queries → also use SQL (gets ALL assessments for the drug)
     if _is_comparison_query(query) and not (filters and filters.get("agency_id")):
+        results = _try_sql(query)
+        if results:
+            log.info("Comparison query routed to SQL: %d results for: %s",
+                     len(results), query[:80])
+            return results
+
+        # Fallback: split vector search
+        query_vector = get_embedding(query)
         per_agency = max(top_k // 2, 4)
         gba_filter = "agency_id eq 'gba'"
         nice_filter = "agency_id eq 'nice'"
@@ -188,18 +199,18 @@ def retrieve(query: str, filters: dict | None = None, top_k: int = 8) -> list[di
         gba_results = _search(query, query_vector, gba_filter, per_agency)
         nice_results = _search(query, query_vector, nice_filter, per_agency)
 
-        # Interleave: GBA, NICE, GBA, NICE...
         context = []
         for pair in zip(gba_results, nice_results):
             context.extend(pair)
         context.extend(gba_results[len(nice_results):])
         context.extend(nice_results[len(gba_results):])
 
-        log.info("Comparison search: %d G-BA + %d NICE for: %s",
+        log.info("Comparison search fallback: %d G-BA + %d NICE for: %s",
                  len(gba_results), len(nice_results), query[:80])
         return context[:top_k]
 
     # 3. Normal single search
+    query_vector = get_embedding(query)
     odata_filter = _build_filter(filters) if filters else None
     context = _search(query, query_vector, odata_filter, top_k)
     log.info("Retrieved %d results for: %s", len(context), query[:80])
